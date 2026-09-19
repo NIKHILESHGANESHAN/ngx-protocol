@@ -19,6 +19,7 @@ from ngx.validation import validate_frame
 from ngx.constants import (
     ACK_REQUESTED,
     ACK_TIMEOUT,
+    MAX_IN_FLIGHT_ACKED,
     ConnectionState,
     MessageType,
 )
@@ -836,6 +837,164 @@ def test_full_ngx_session():
         assert (
             reciprocal_bye.message_type
             == MessageType.BYE.value
+        )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_max_in_flight_acked_messages_is_enforced():
+    client, server = make_established_connections()
+
+    try:
+        for _ in range(MAX_IN_FLIGHT_ACKED):
+            client.send_msg(
+                "in-flight",
+                require_ack=True,
+            )
+
+        assert (
+            len(client.pending_acks)
+            == MAX_IN_FLIGHT_ACKED
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="maximum number of in-flight",
+        ):
+            client.send_msg(
+                "one-too-many",
+                require_ack=True,
+            )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_retransmission_stops_after_max_attempts():
+    client, server = make_established_connections()
+
+    try:
+        message = client.send_msg(
+            "retry limit test",
+            require_ack=True,
+        )
+
+        pending = client.pending_acks[
+            message.message_id
+        ]
+
+        assert pending.attempts == 1
+
+        pending.last_sent = (
+            time.monotonic()
+            - ACK_TIMEOUT
+            - 0.1
+        )
+
+        client.check_retransmissions()
+
+        assert pending.attempts == 2
+        assert (
+            message.message_id
+            in client.pending_acks
+        )
+
+        pending.last_sent = (
+            time.monotonic()
+            - ACK_TIMEOUT
+            - 0.1
+        )
+
+        client.check_retransmissions()
+
+        assert pending.attempts == 3
+        assert (
+            message.message_id
+            in client.pending_acks
+        )
+
+        pending.last_sent = (
+            time.monotonic()
+            - ACK_TIMEOUT
+            - 0.1
+        )
+
+        client.check_retransmissions()
+
+        assert (
+            message.message_id
+            not in client.pending_acks
+        )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_ack_after_retransmission_marks_message_delivered():
+    client, server = make_established_connections()
+
+    try:
+        message = client.send_msg(
+            "late ACK test",
+            require_ack=True,
+        )
+
+        first = server.recv_frame()
+
+        assert first.message_id == message.message_id
+
+        server.receive_message(first)
+
+        pending = client.pending_acks[
+            message.message_id
+        ]
+
+        pending.last_sent = (
+            time.monotonic()
+            - ACK_TIMEOUT
+            - 0.1
+        )
+
+        client.check_retransmissions()
+
+        assert pending.attempts == 2
+        assert (
+            message.message_id
+            in client.pending_acks
+        )
+
+        retransmitted = server.recv_frame()
+
+        assert (
+            retransmitted.message_id
+            == message.message_id
+        )
+
+        assert server.receive_message(
+            retransmitted
+        ) is False
+
+        ack = client.recv_frame()
+
+        assert ack.message_type == MessageType.ACK.value
+        assert ack.payload == (
+            f"{message.message_id:06d}".encode("ascii")
+        )
+
+        client.receive_ack(ack)
+
+        assert (
+            message.message_id
+            not in client.pending_acks
+        )
+
+        assert (
+            message.message_id
+            in client.acknowledged_messages
         )
 
     finally:
