@@ -7,19 +7,32 @@ sys.path.insert(
     0,
     str(
         Path(__file__).resolve().parents[1]
-        / "implementation"
+        / "implementation",
     ),
 )
 
 from ngx.connection import NGXConnection
-from ngx.constants import ACK_REQUESTED, ACK_TIMEOUT
+from ngx.constants import (
+    ACK_REQUESTED,
+    ACK_TIMEOUT,
+    ConnectionState,
+)
 
 
-def test_ack_requested_message():
+def make_established_connections():
     client_sock, server_sock = socket.socketpair()
 
     client = NGXConnection(client_sock)
     server = NGXConnection(server_sock)
+
+    client.state = ConnectionState.ESTABLISHED
+    server.state = ConnectionState.ESTABLISHED
+
+    return client, server
+
+
+def test_ack_requested_message():
+    client, server = make_established_connections()
 
     try:
         message = client.send_msg(
@@ -53,10 +66,7 @@ def test_ack_requested_message():
 
 
 def test_duplicate_message_is_not_processed_twice():
-    client_sock, server_sock = socket.socketpair()
-
-    client = NGXConnection(client_sock)
-    server = NGXConnection(server_sock)
+    client, server = make_established_connections()
 
     try:
         message = client.send_msg(
@@ -64,7 +74,6 @@ def test_duplicate_message_is_not_processed_twice():
             require_ack=True,
         )
 
-        # First delivery
         first = server.recv_frame()
 
         assert first.message_id == message.message_id
@@ -80,22 +89,17 @@ def test_duplicate_message_is_not_processed_twice():
 
         client.receive_ack(ack1)
 
-        # Simulate retransmission by sending the SAME
-        # frame again from the client side.
+        # Simulate retransmission of the SAME frame.
         client.sock.sendall(first.encode())
 
         duplicate = server.recv_frame()
 
-        assert duplicate.message_id == (
-            message.message_id
-        )
+        assert duplicate.message_id == message.message_id
 
-        # Server must recognize it as a duplicate.
-        assert server.receive_message(
-            duplicate
-        ) is False
+        # The application must NOT process it twice.
+        assert server.receive_message(duplicate) is False
 
-        # Server should send the ACK again.
+        # The receiver sends the ACK again.
         ack2 = client.recv_frame()
 
         assert ack2.message_type == "ACK"
@@ -109,10 +113,7 @@ def test_duplicate_message_is_not_processed_twice():
 
 
 def test_message_retransmission():
-    client_sock, server_sock = socket.socketpair()
-
-    client = NGXConnection(client_sock)
-    server = NGXConnection(server_sock)
+    client, server = make_established_connections()
 
     try:
         message = client.send_msg(
@@ -123,17 +124,15 @@ def test_message_retransmission():
         first = server.recv_frame()
 
         assert first.message_id == message.message_id
-        assert first.payload == (
-            b"Retransmission test"
-        )
+        assert first.payload == b"Retransmission test"
 
-        # Deliberately do NOT send an ACK.
+        # Deliberately do not send an ACK.
 
         pending = client.pending_acks[
             message.message_id
         ]
 
-        # Pretend the ACK timeout has already happened.
+        # Pretend the ACK timeout has already occurred.
         pending.last_sent = (
             time.monotonic()
             - ACK_TIMEOUT
@@ -142,7 +141,6 @@ def test_message_retransmission():
 
         client.check_retransmissions()
 
-        # The client should retransmit the exact same frame.
         retransmitted = server.recv_frame()
 
         assert retransmitted.message_id == (
@@ -153,6 +151,7 @@ def test_message_retransmission():
             b"Retransmission test"
         )
 
+        # Same message ID = retransmission, not a new message.
         assert retransmitted.message_id == (
             first.message_id
         )
@@ -164,7 +163,6 @@ def test_message_retransmission():
             == 2
         )
 
-        # Server processes the retransmission.
         assert server.receive_message(
             retransmitted
         ) is True

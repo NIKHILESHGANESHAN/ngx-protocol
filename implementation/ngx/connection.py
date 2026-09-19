@@ -10,8 +10,10 @@ from .constants import (
     ConnectionState,
     MessageType,
 )
+from .errors import ERRORS
 from .frame import Frame
 from .parser import FrameParser, ProtocolError
+from .validation import validate_frame
 
 
 class MessageIDGenerator:
@@ -44,10 +46,7 @@ class NGXConnection:
 
         self.state = ConnectionState.HANDSHAKE
 
-        # ACK-requested messages waiting for acknowledgement.
         self.pending_acks = {}
-
-        # Message IDs already processed in this TCP session.
         self.processed_messages = set()
 
     def send_frame(
@@ -67,6 +66,27 @@ class NGXConnection:
 
         return frame
 
+    def send_error(self, code, detail=""):
+        if code not in ERRORS:
+            raise ValueError(
+                f"Unknown NGX error code: {code}"
+            )
+
+        error = ERRORS[code]
+
+        payload = (
+            f"{error.code} {error.name}"
+        )
+
+        if detail:
+            payload += f" {detail}"
+
+        return self.send_frame(
+            MessageType.ERROR.value,
+            payload.encode("utf-8"),
+            0,
+        )
+
     def send_hello(self):
         return self.send_frame(
             MessageType.HELLO.value,
@@ -82,12 +102,20 @@ class NGXConnection:
         )
 
     def send_msg(self, text, require_ack=False):
-        if require_ack and len(self.pending_acks) >= MAX_IN_FLIGHT_ACKED:
+        if require_ack and (
+            len(self.pending_acks)
+            >= MAX_IN_FLIGHT_ACKED
+        ):
             raise RuntimeError(
-                "maximum number of in-flight ACK messages reached"
+                "maximum number of in-flight "
+                "ACK messages reached"
             )
 
-        flags = ACK_REQUESTED if require_ack else 0
+        flags = (
+            ACK_REQUESTED
+            if require_ack
+            else 0
+        )
 
         frame = self.send_frame(
             MessageType.MSG.value,
@@ -96,7 +124,9 @@ class NGXConnection:
         )
 
         if require_ack:
-            self.pending_acks[frame.message_id] = PendingMessage(frame)
+            self.pending_acks[
+                frame.message_id
+            ] = PendingMessage(frame)
 
         return frame
 
@@ -133,14 +163,21 @@ class NGXConnection:
             return False
 
         if len(frame.payload) != 6:
-            raise ProtocolError("invalid ACK payload")
+            raise ProtocolError(
+                "invalid ACK payload"
+            )
 
         try:
             acknowledged_id = int(
                 frame.payload.decode("ascii")
             )
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise ProtocolError("invalid ACK payload") from exc
+        except (
+            UnicodeDecodeError,
+            ValueError,
+        ) as exc:
+            raise ProtocolError(
+                "invalid ACK payload"
+            ) from exc
 
         pending = self.pending_acks.pop(
             acknowledged_id,
@@ -158,22 +195,34 @@ class NGXConnection:
     def check_retransmissions(self):
         now = time.monotonic()
 
-        for message_id, pending in list(
+        for (
+            message_id,
+            pending,
+        ) in list(
             self.pending_acks.items()
         ):
-            elapsed = now - pending.last_sent
+            elapsed = (
+                now - pending.last_sent
+            )
 
             if elapsed < ACK_TIMEOUT:
                 continue
 
-            if pending.attempts >= MAX_ATTEMPTS:
+            if (
+                pending.attempts
+                >= MAX_ATTEMPTS
+            ):
                 print(
                     f"ACK timeout: message "
-                    f"{message_id:06d} failed after "
+                    f"{message_id:06d} failed "
+                    f"after "
                     f"{pending.attempts} attempts"
                 )
 
-                del self.pending_acks[message_id]
+                del self.pending_acks[
+                    message_id
+                ]
+
                 continue
 
             self.sock.sendall(
@@ -186,20 +235,15 @@ class NGXConnection:
             print(
                 f"Retransmitting message "
                 f"{message_id:06d} "
-                f"(attempt {pending.attempts}/"
+                f"(attempt "
+                f"{pending.attempts}/"
                 f"{MAX_ATTEMPTS})"
             )
 
     def receive_message(self, frame):
-        """
-        Returns True when the frame is a new message.
-
-        Duplicate ACK-requested messages are not processed
-        twice. Their ACK is sent again.
-        """
-
-        if not (
-            frame.message_type == MessageType.MSG.value
+        if (
+            frame.message_type
+            != MessageType.MSG.value
         ):
             return True
 
@@ -208,13 +252,19 @@ class NGXConnection:
         ):
             return True
 
-        if frame.message_id in self.processed_messages:
+        if (
+            frame.message_id
+            in self.processed_messages
+        ):
             print(
                 f"Duplicate MSG "
-                f"{frame.message_id:06d} ignored"
+                f"{frame.message_id:06d} "
+                f"ignored"
             )
 
-            self.send_ack(frame.message_id)
+            self.send_ack(
+                frame.message_id
+            )
 
             return False
 
@@ -222,7 +272,9 @@ class NGXConnection:
             frame.message_id
         )
 
-        self.send_ack(frame.message_id)
+        self.send_ack(
+            frame.message_id
+        )
 
         return True
 
@@ -241,13 +293,51 @@ class NGXConnection:
                 )
 
             try:
-                frames = self.parser.feed(data)
+                frames = self.parser.feed(
+                    data
+                )
             except ProtocolError:
                 raise
 
-            if frames:
-                self.pending_frames.extend(frames)
-                return self.pending_frames.popleft()
+            for frame in frames:
+                try:
+                    validate_frame(
+                        frame,
+                        self.state.value,
+                    )
+                except ValueError as exc:
+                    error_text = str(exc)
+
+                    code = error_text.split(
+                        " ",
+                        1,
+                    )[0]
+
+                    if code in ERRORS:
+                        self.send_error(
+                            code,
+                            error_text,
+                        )
+
+                    if ERRORS.get(
+                        code
+                    ) and ERRORS[
+                        code
+                    ].fatal:
+                        raise ProtocolError(
+                            error_text
+                        )
+
+                    continue
+
+                self.pending_frames.append(
+                    frame
+                )
+
+            if self.pending_frames:
+                return (
+                    self.pending_frames.popleft()
+                )
 
     def close(self):
         try:
