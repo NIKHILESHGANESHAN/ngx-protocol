@@ -3,3 +3,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .DS_Store
+
+# Python packaging artifacts
+*.egg-info/
+build/
+dist/
