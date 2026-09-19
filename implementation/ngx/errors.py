@@ -64,6 +64,11 @@ ERRORS = {
         "PROTOCOL_ERROR",
         True,
     ),
+    "E012": ErrorDefinition(
+        "E012",
+        "INVALID_PONG",
+        False,
+    ),
 }
 
 

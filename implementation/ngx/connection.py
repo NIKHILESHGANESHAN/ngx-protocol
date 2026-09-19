@@ -48,6 +48,7 @@ class NGXConnection:
         self.state = ConnectionState.HANDSHAKE
 
         self.pending_acks = {}
+        self.pending_pings = set()
         self.acknowledged_messages = set()
         self.processed_messages = set()
         self.handshake_started = time.monotonic()
@@ -183,11 +184,28 @@ class NGXConnection:
         )
 
     def send_ping(self):
-        return self.send_frame(
+        frame = self.send_frame(
             MessageType.PING.value,
             b"",
             0,
         )
+        self.pending_pings.add(frame.message_id)
+        return frame
+
+    def receive_pong(self, frame):
+        if frame.message_type != MessageType.PONG.value:
+            raise ProtocolError("E012 INVALID_PONG")
+
+        try:
+            pong_for = int(frame.payload.decode("ascii"))
+        except (UnicodeDecodeError, ValueError):
+            raise ProtocolError("E012 INVALID_PONG")
+
+        if pong_for not in self.pending_pings:
+            raise ProtocolError("E012 INVALID_PONG")
+
+        self.pending_pings.remove(pong_for)
+        return True
 
     def send_pong(self, ping_id):
         return self.send_frame(

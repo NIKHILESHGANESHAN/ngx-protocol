@@ -65,6 +65,8 @@ def run_client():
             frame = connection.recv_frame()
 
             if frame.message_type == MessageType.PONG.value:
+                connection.receive_pong(frame)
+
                 pong_for = int(
                     frame.payload.decode("ascii")
                 )
@@ -74,8 +76,7 @@ def run_client():
                     f"{pong_for:06d}"
                 )
 
-                if pong_for == ping.message_id:
-                    break
+                break
 
         # 5. BYE
         connection.send_bye("Client shutting down")

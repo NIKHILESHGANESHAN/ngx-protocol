@@ -13,6 +13,7 @@ sys.path.insert(
 )
 
 from ngx.connection import NGXConnection
+from ngx.frame import Frame
 from ngx.parser import ProtocolError
 from ngx.constants import (
     ACK_REQUESTED,
@@ -552,6 +553,74 @@ def test_invalid_protocol_version_sends_error():
         assert error.payload.startswith(
             b"E001 INVALID_VERSION"
         )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_pong_for_outstanding_ping_is_accepted():
+    client, server = make_established_connections()
+
+    try:
+        ping = client.send_ping()
+
+        pong = Frame(
+            message_type=MessageType.PONG.value,
+            flags=0,
+            message_id=1,
+            payload=f"{ping.message_id:06d}".encode("ascii"),
+        )
+
+        assert client.receive_pong(pong) is True
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_unknown_pong_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        pong = Frame(
+            message_type=MessageType.PONG.value,
+            flags=0,
+            message_id=1,
+            payload=b"000999",
+        )
+
+        with pytest.raises(
+            ProtocolError,
+            match="E012 INVALID_PONG",
+        ):
+            client.receive_pong(pong)
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_duplicate_pong_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        ping = client.send_ping()
+
+        pong = Frame(
+            message_type=MessageType.PONG.value,
+            flags=0,
+            message_id=1,
+            payload=f"{ping.message_id:06d}".encode("ascii"),
+        )
+
+        assert client.receive_pong(pong) is True
+
+        with pytest.raises(
+            ProtocolError,
+            match="E012 INVALID_PONG",
+        ):
+            client.receive_pong(pong)
 
     finally:
         client.close()
