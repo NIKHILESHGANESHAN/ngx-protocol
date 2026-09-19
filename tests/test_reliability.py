@@ -1000,3 +1000,88 @@ def test_ack_after_retransmission_marks_message_delivered():
     finally:
         client.close()
         server.close()
+
+
+def test_recv_frame_detects_peer_eof():
+    client, server = make_established_connections()
+
+    try:
+        server.close()
+
+        with pytest.raises(
+            ConnectionError,
+            match="peer closed the connection",
+        ):
+            client.recv_frame()
+
+    finally:
+        client.close()
+
+
+def test_handshake_timeout_sends_error():
+    client, server = make_established_connections()
+
+    try:
+        client.state = ConnectionState.HANDSHAKE
+        server.state = ConnectionState.HANDSHAKE
+
+        client.handshake_started = (
+            time.monotonic() - 11
+        )
+
+        with pytest.raises(
+            ProtocolError,
+            match="E009 HANDSHAKE_TIMEOUT",
+        ):
+            client.recv_frame()
+
+        error = server.recv_frame()
+
+        assert (
+            error.message_type
+            == MessageType.ERROR.value
+        )
+
+        assert error.payload.startswith(
+            b"E009 HANDSHAKE_TIMEOUT"
+        )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_established_socket_timeout_does_not_close_connection():
+    client, server = make_established_connections()
+
+    try:
+        # A very short timeout lets us exercise the timeout
+        # path without waiting for ACK_TIMEOUT.
+        client.sock.settimeout(0.01)
+
+        with pytest.raises(
+            socket.timeout,
+        ):
+            client.sock.recv(1)
+
+        assert (
+            client.state
+            == ConnectionState.ESTABLISHED
+        )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_close_releases_socket():
+    client, server = make_established_connections()
+
+    client.close()
+
+    try:
+        with pytest.raises(OSError):
+            client.sock.send(b"test")
+
+    finally:
+        server.close()
