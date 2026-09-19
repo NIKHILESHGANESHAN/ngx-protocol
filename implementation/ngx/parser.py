@@ -14,7 +14,6 @@ class FrameParser:
 
     def feed(self, data: bytes) -> list[Frame]:
         self.buffer.extend(data)
-
         frames = []
 
         while True:
@@ -38,38 +37,67 @@ class FrameParser:
         try:
             header_text = header.decode("ascii")
         except UnicodeDecodeError as exc:
-            raise ProtocolError("header is not ASCII", "E003") from exc
+            raise ProtocolError(
+                "header is not ASCII",
+                "E003",
+            ) from exc
 
         parts = header_text.split(" ")
 
         if len(parts) != 5:
-            raise ProtocolError("invalid header", "E003")
+            raise ProtocolError(
+                "invalid header",
+                "E003",
+            )
 
         protocol, message_type, flags_text, id_text, length_text = parts
 
         if protocol != PROTOCOL:
-            raise ProtocolError("invalid protocol version", "E001")
+            raise ProtocolError(
+                "invalid protocol version",
+                "E001",
+            )
 
-        try:
-            flags = int(flags_text, 16)
-        except ValueError as exc:
-            raise ProtocolError("invalid flags", "E003") from exc
+        # FLAGS must contain exactly two hexadecimal digits.
+        if len(flags_text) != 2 or any(
+            char not in "0123456789abcdefABCDEF"
+            for char in flags_text
+        ):
+            raise ProtocolError(
+                "invalid flags",
+                "E003",
+            )
 
-        try:
-            message_id = int(id_text)
-        except ValueError as exc:
-            raise ProtocolError("invalid message ID", "E007") from exc
+        flags = int(flags_text, 16)
+
+        # MESSAGE_ID must contain exactly six decimal digits.
+        if len(id_text) != 6 or not id_text.isdigit():
+            raise ProtocolError(
+                "invalid message ID",
+                "E007",
+            )
+
+        message_id = int(id_text)
 
         try:
             payload_length = int(length_text)
         except ValueError as exc:
-            raise ProtocolError("invalid payload length", "E004") from exc
+            raise ProtocolError(
+                "invalid payload length",
+                "E004",
+            ) from exc
 
         if not 1 <= message_id <= 999999:
-            raise ProtocolError("invalid message ID", "E007")
+            raise ProtocolError(
+                "invalid message ID",
+                "E007",
+            )
 
         if not 0 <= payload_length <= MAX_PAYLOAD:
-            raise ProtocolError("payload too large", "E006")
+            raise ProtocolError(
+                "payload too large",
+                "E006",
+            )
 
         payload_start = delimiter + 2
         payload_end = payload_start + payload_length
@@ -77,7 +105,9 @@ class FrameParser:
         if len(self.buffer) < payload_end:
             return None
 
-        payload = bytes(self.buffer[payload_start:payload_end])
+        payload = bytes(
+            self.buffer[payload_start:payload_end]
+        )
 
         del self.buffer[:payload_end]
 
