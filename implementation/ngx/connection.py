@@ -5,6 +5,7 @@ from collections import deque
 from .constants import (
     ACK_REQUESTED,
     ACK_TIMEOUT,
+    HELLO_TIMEOUT,
     MAX_ATTEMPTS,
     MAX_IN_FLIGHT_ACKED,
     ConnectionState,
@@ -48,6 +49,7 @@ class NGXConnection:
 
         self.pending_acks = {}
         self.processed_messages = set()
+        self.handshake_started = time.monotonic()
 
     def send_frame(
         self,
@@ -285,7 +287,45 @@ class NGXConnection:
         while True:
             self.check_retransmissions()
 
-            data = self.sock.recv(4096)
+            if self.state == ConnectionState.HANDSHAKE:
+                elapsed = (
+                    time.monotonic()
+                    - self.handshake_started
+                )
+
+                remaining = (
+                    HELLO_TIMEOUT - elapsed
+                )
+
+                if remaining <= 0:
+                    self.send_error(
+                        "E009",
+                        "HELLO timeout",
+                    )
+
+                    raise ProtocolError(
+                        "E009 HANDSHAKE_TIMEOUT"
+                    )
+
+                self.sock.settimeout(
+                    remaining
+                )
+
+            else:
+                self.sock.settimeout(None)
+
+            try:
+                data = self.sock.recv(4096)
+
+            except socket.timeout as exc:
+                self.send_error(
+                    "E009",
+                    "HELLO timeout",
+                )
+
+                raise ProtocolError(
+                    "E009 HANDSHAKE_TIMEOUT"
+                ) from exc
 
             if not data:
                 raise ConnectionError(

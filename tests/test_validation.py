@@ -240,3 +240,39 @@ def test_pong_requires_six_digit_id():
             frame,
             "ESTABLISHED",
         )
+
+
+def test_handshake_timeout():
+    client_sock, server_sock = socket.socketpair()
+
+    client = NGXConnection(client_sock)
+    server = NGXConnection(server_sock)
+
+    try:
+        # Pretend the 10-second timeout has already elapsed.
+        server.handshake_started = (
+            __import__("time").monotonic()
+            - 11
+        )
+
+        with pytest.raises(
+            ProtocolError,
+            match="E009 HANDSHAKE_TIMEOUT",
+        ):
+            server.recv_frame()
+
+        error = client.recv_frame()
+
+        assert error.message_type == "ERROR"
+
+        payload = error.payload.decode(
+            "utf-8"
+        )
+
+        assert payload.startswith(
+            "E009 HANDSHAKE_TIMEOUT"
+        )
+
+    finally:
+        client.close()
+        server.close()
