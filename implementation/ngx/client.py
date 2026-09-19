@@ -44,6 +44,8 @@ def run_client():
             frame = connection.recv_frame()
 
             if frame.message_type == MessageType.ACK.value:
+                connection.receive_ack(frame)
+
                 acknowledged_id = int(
                     frame.payload.decode("ascii")
                 )

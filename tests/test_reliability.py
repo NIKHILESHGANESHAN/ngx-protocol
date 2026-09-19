@@ -753,3 +753,91 @@ def test_duplicate_outgoing_bye_is_rejected():
     finally:
         client.close()
         server.close()
+
+
+def test_full_ngx_session():
+    client, server = make_established_connections()
+
+    try:
+        # HELLO
+        client.state = ConnectionState.HANDSHAKE
+        server.state = ConnectionState.HANDSHAKE
+
+        hello = client.send_hello()
+        received_hello = server.recv_frame()
+
+        assert received_hello.message_type == MessageType.HELLO.value
+        assert received_hello.message_id == hello.message_id
+
+        server.send_hello_ack()
+        received_hello_ack = client.recv_frame()
+
+        assert (
+            received_hello_ack.message_type
+            == MessageType.HELLO_ACK.value
+        )
+
+        client.mark_established()
+        server.mark_established()
+
+        # MSG + ACK
+        message = client.send_msg(
+            "Full session test",
+            require_ack=True,
+        )
+
+        received_message = server.recv_frame()
+
+        assert (
+            received_message.message_type
+            == MessageType.MSG.value
+        )
+        assert received_message.payload == b"Full session test"
+
+        assert server.receive_message(
+            received_message
+        ) is True
+
+        ack = client.recv_frame()
+
+        assert ack.message_type == MessageType.ACK.value
+        assert client.receive_ack(ack) is True
+        assert message.message_id not in client.pending_acks
+
+        # PING + PONG
+        ping = client.send_ping()
+        received_ping = server.recv_frame()
+
+        assert (
+            received_ping.message_type
+            == MessageType.PING.value
+        )
+
+        server.send_pong(received_ping.message_id)
+
+        pong = client.recv_frame()
+
+        assert pong.message_type == MessageType.PONG.value
+        assert client.receive_pong(pong) is True
+
+        # BYE + reciprocal BYE
+        client.send_bye("Client shutting down")
+        client.mark_closing()
+
+        received_bye = server.recv_frame()
+
+        assert received_bye.message_type == MessageType.BYE.value
+
+        server.mark_closing()
+        server.send_bye("Goodbye")
+
+        reciprocal_bye = client.recv_frame()
+
+        assert (
+            reciprocal_bye.message_type
+            == MessageType.BYE.value
+        )
+
+    finally:
+        client.close()
+        server.close()
