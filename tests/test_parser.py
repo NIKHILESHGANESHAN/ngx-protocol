@@ -121,3 +121,32 @@ def test_two_digit_hex_flags_are_accepted():
 
     assert len(frames) == 1
     assert frames[0].flags == 0x0A
+
+
+def test_truncated_header_waits_for_more_data():
+    parser = FrameParser()
+
+    assert parser.feed(
+        b"NGX/0.1 MSG 00 000001"
+    ) == []
+
+
+def test_header_without_payload_waits_for_more_data():
+    parser = FrameParser()
+
+    assert parser.feed(
+        b"NGX/0.1 MSG 00 000001 5\r\n"
+    ) == []
+
+
+def test_partial_payload_waits_for_remaining_bytes():
+    parser = FrameParser()
+
+    assert parser.feed(
+        b"NGX/0.1 MSG 00 000001 5\r\nHel"
+    ) == []
+
+    frames = parser.feed(b"lo")
+
+    assert len(frames) == 1
+    assert frames[0].payload == b"Hello"
