@@ -300,3 +300,80 @@ def test_message_id_decrease_is_rejected():
     finally:
         client.close()
         server.close()
+
+
+def test_unknown_ack_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        from ngx.frame import Frame
+        from ngx.constants import MessageType
+
+        ack = Frame(
+            message_type=MessageType.ACK.value,
+            flags=0,
+            message_id=1,
+            payload=b"999999",
+        )
+
+        with pytest.raises(
+            ProtocolError,
+            match="E008 INVALID_ACK",
+        ):
+            client.receive_ack(ack)
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_duplicate_ack_is_ignored():
+    client, server = make_established_connections()
+
+    try:
+        message = client.send_msg(
+            "ACK test",
+            require_ack=True,
+        )
+
+        received = server.recv_frame()
+        server.receive_message(received)
+
+        ack = client.recv_frame()
+        client.receive_ack(ack)
+
+        assert message.message_id not in client.pending_acks
+
+        # A second copy of the same ACK is harmless.
+        client.receive_ack(ack)
+
+        assert message.message_id not in client.pending_acks
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_malformed_ack_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        from ngx.frame import Frame
+        from ngx.constants import MessageType
+
+        ack = Frame(
+            message_type=MessageType.ACK.value,
+            flags=0,
+            message_id=1,
+            payload=b"ABCDEF",
+        )
+
+        with pytest.raises(
+            ProtocolError,
+            match="E008 INVALID_ACK",
+        ):
+            client.receive_ack(ack)
+
+    finally:
+        client.close()
+        server.close()

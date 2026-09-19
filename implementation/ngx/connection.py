@@ -48,6 +48,7 @@ class NGXConnection:
         self.state = ConnectionState.HANDSHAKE
 
         self.pending_acks = {}
+        self.acknowledged_messages = set()
         self.processed_messages = set()
         self.handshake_started = time.monotonic()
         self.last_received_id = 0
@@ -166,9 +167,7 @@ class NGXConnection:
             return False
 
         if len(frame.payload) != 6:
-            raise ProtocolError(
-                "invalid ACK payload"
-            )
+            raise ProtocolError("E008 INVALID_ACK")
 
         try:
             acknowledged_id = int(
@@ -179,19 +178,26 @@ class NGXConnection:
             ValueError,
         ) as exc:
             raise ProtocolError(
-                "invalid ACK payload"
+                "E008 INVALID_ACK"
             ) from exc
+
+        if acknowledged_id in self.acknowledged_messages:
+            return True
 
         pending = self.pending_acks.pop(
             acknowledged_id,
             None,
         )
 
-        if pending is not None:
-            print(
-                f"ACK received for "
-                f"{acknowledged_id:06d}"
-            )
+        if pending is None:
+            raise ProtocolError("E008 INVALID_ACK")
+
+        self.acknowledged_messages.add(acknowledged_id)
+
+        print(
+            f"ACK received for "
+            f"{acknowledged_id:06d}"
+        )
 
         return True
 
