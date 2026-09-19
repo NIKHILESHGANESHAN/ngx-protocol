@@ -1,7 +1,7 @@
 import socket
 
 from .connection import NGXConnection
-from .constants import ConnectionState, MessageType
+from .constants import MessageType
 
 
 HOST = "127.0.0.1"
@@ -47,9 +47,7 @@ def run_server():
 
         connection.send_hello_ack()
 
-        connection.state = (
-            ConnectionState.ESTABLISHED
-        )
+        connection.mark_established()
 
         print("Connection established")
 
@@ -97,6 +95,8 @@ def run_server():
                 print(
                     "Client requested shutdown"
                 )
+
+                connection.mark_closing()
 
                 connection.send_bye(
                     "Goodbye"

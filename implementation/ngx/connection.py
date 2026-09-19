@@ -53,6 +53,37 @@ class NGXConnection:
         self.handshake_started = time.monotonic()
         self.last_received_id = 0
 
+    def transition_to(self, new_state):
+        allowed = {
+            ConnectionState.HANDSHAKE: {
+                ConnectionState.ESTABLISHED,
+            },
+            ConnectionState.ESTABLISHED: {
+                ConnectionState.CLOSING,
+            },
+            ConnectionState.CLOSING: set(),
+        }
+
+        if new_state == self.state:
+            return
+
+        if new_state not in allowed[self.state]:
+            raise ProtocolError(
+                "E005 INVALID_STATE"
+            )
+
+        self.state = new_state
+
+    def mark_established(self):
+        self.transition_to(
+            ConnectionState.ESTABLISHED
+        )
+
+    def mark_closing(self):
+        self.transition_to(
+            ConnectionState.CLOSING
+        )
+
     def send_frame(
         self,
         message_type,

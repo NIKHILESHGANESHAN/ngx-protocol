@@ -13,7 +13,7 @@ sys.path.insert(
 )
 
 from ngx.connection import NGXConnection
-from ngx.constants import ACK_REQUESTED, ConnectionState
+from ngx.constants import ACK_REQUESTED, ConnectionState, MessageType
 from ngx.frame import Frame
 from ngx.parser import ProtocolError
 from ngx.validation import validate_frame
@@ -276,3 +276,35 @@ def test_handshake_timeout():
     finally:
         client.close()
         server.close()
+
+
+def test_bye_rejected_during_handshake():
+    frame = Frame(
+        message_type=MessageType.BYE.value,
+        flags=0,
+        message_id=1,
+        payload=b"shutdown",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E005 INVALID_STATE",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.HANDSHAKE.value,
+        )
+
+
+def test_bye_allowed_during_closing():
+    frame = Frame(
+        message_type=MessageType.BYE.value,
+        flags=0,
+        message_id=1,
+        payload=b"goodbye",
+    )
+
+    assert validate_frame(
+        frame,
+        ConnectionState.CLOSING.value,
+    ) is True

@@ -1,7 +1,7 @@
 import socket
 
 from .connection import NGXConnection
-from .constants import ConnectionState, MessageType
+from .constants import MessageType
 
 
 HOST = "127.0.0.1"
@@ -27,7 +27,7 @@ def run_client():
         if frame.message_type != MessageType.HELLO_ACK.value:
             raise RuntimeError("Expected HELLO_ACK")
 
-        connection.state = ConnectionState.ESTABLISHED
+        connection.mark_established()
 
         print("HELLO_ACK received")
         print("Connection established")
@@ -79,6 +79,7 @@ def run_client():
 
         # 5. BYE
         connection.send_bye("Client shutting down")
+        connection.mark_closing()
 
         print("BYE sent")
 

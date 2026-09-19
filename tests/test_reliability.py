@@ -260,48 +260,6 @@ def test_message_id_decrease_is_rejected():
         client.close()
         server.close()
 
-def test_message_id_decrease_is_rejected():
-    client, server = make_established_connections()
-
-    try:
-        first = client.send_msg("First")
-        received = server.recv_frame()
-
-        assert received.message_id == first.message_id
-
-        from ngx.frame import Frame
-        from ngx.constants import MessageType
-
-        second = Frame(
-            message_type=MessageType.MSG.value,
-            flags=0,
-            message_id=2,
-            payload=b"Second",
-        )
-        client.sock.sendall(second.encode())
-
-        received_second = server.recv_frame()
-        assert received_second.message_id == 2
-
-        backward = Frame(
-            message_type=MessageType.MSG.value,
-            flags=0,
-            message_id=1,
-            payload=b"Backward ID",
-        )
-        client.sock.sendall(backward.encode())
-
-        with pytest.raises(
-            ProtocolError,
-            match="E007 INVALID_MESSAGE_ID",
-        ):
-            server.recv_frame()
-
-    finally:
-        client.close()
-        server.close()
-
-
 def test_unknown_ack_is_rejected():
     client, server = make_established_connections()
 
@@ -461,6 +419,74 @@ def test_recv_frame_automatically_retransmits_on_ack_timeout(
             message.message_id
             not in client.pending_acks
         )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_state_transition_handshake_to_established():
+    client, server = make_established_connections()
+
+    try:
+        # Already established by the test helper.
+        # Verify the transition API is idempotent.
+        client.mark_established()
+
+        assert (
+            client.state
+            == ConnectionState.ESTABLISHED
+        )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_state_transition_established_to_closing():
+    client, server = make_established_connections()
+
+    try:
+        client.mark_closing()
+
+        assert (
+            client.state
+            == ConnectionState.CLOSING
+        )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_invalid_state_transition_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        client.mark_closing()
+
+        with pytest.raises(
+            ProtocolError,
+            match="E005 INVALID_STATE",
+        ):
+            client.mark_established()
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_handshake_to_closing_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        client.state = ConnectionState.HANDSHAKE
+
+        with pytest.raises(
+            ProtocolError,
+            match="E005 INVALID_STATE",
+        ):
+            client.mark_closing()
 
     finally:
         client.close()

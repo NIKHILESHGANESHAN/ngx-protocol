@@ -80,6 +80,14 @@ def validate_frame(frame, state):
             "E005 INVALID_STATE"
         )
 
+    if (
+        frame.message_type == MessageType.BYE.value
+        and state not in {"ESTABLISHED", "CLOSING"}
+    ):
+        raise ValueError(
+            "E005 INVALID_STATE"
+        )
+
     # -------------------------
     # Command-specific rules
     # -------------------------
