@@ -308,3 +308,239 @@ def test_bye_allowed_during_closing():
         frame,
         ConnectionState.CLOSING.value,
     ) is True
+
+
+def test_hello_ack_payload_must_be_empty():
+    frame = Frame(
+        message_type=MessageType.HELLO_ACK.value,
+        flags=0,
+        message_id=1,
+        payload=b"unexpected",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E004 INVALID_LENGTH",
+    ):
+        validate_frame(frame, ConnectionState.HANDSHAKE.value)
+
+
+def test_hello_cannot_request_ack():
+    frame = Frame(
+        message_type=MessageType.HELLO.value,
+        flags=ACK_REQUESTED,
+        message_id=1,
+        payload=b"",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(frame, ConnectionState.HANDSHAKE.value)
+
+
+def test_hello_ack_cannot_request_ack():
+    frame = Frame(
+        message_type=MessageType.HELLO_ACK.value,
+        flags=ACK_REQUESTED,
+        message_id=1,
+        payload=b"",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(frame, ConnectionState.HANDSHAKE.value)
+
+
+def test_bye_cannot_request_ack():
+    frame = Frame(
+        message_type=MessageType.BYE.value,
+        flags=ACK_REQUESTED,
+        message_id=1,
+        payload=b"goodbye",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(frame, ConnectionState.ESTABLISHED.value)
+
+
+def test_msg_valid_utf8_is_accepted():
+    frame = Frame(
+        message_type=MessageType.MSG.value,
+        flags=0,
+        message_id=1,
+        payload="Hello 🌍".encode("utf-8"),
+    )
+
+    assert validate_frame(
+        frame,
+        ConnectionState.ESTABLISHED.value,
+    ) is True
+
+
+def test_msg_invalid_utf8_is_rejected():
+    frame = Frame(
+        message_type=MessageType.MSG.value,
+        flags=0,
+        message_id=1,
+        payload=b"\xff\xfe",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_bye_invalid_utf8_is_rejected():
+    frame = Frame(
+        message_type=MessageType.BYE.value,
+        flags=0,
+        message_id=1,
+        payload=b"\xff\xfe",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_pong_cannot_request_ack():
+    frame = Frame(
+        message_type=MessageType.PONG.value,
+        flags=ACK_REQUESTED,
+        message_id=1,
+        payload=b"000001",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_pong_non_digit_payload_is_rejected():
+    frame = Frame(
+        message_type=MessageType.PONG.value,
+        flags=0,
+        message_id=1,
+        payload=b"ABCDEF",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E004 INVALID_LENGTH",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_pong_out_of_range_id_is_rejected():
+    frame = Frame(
+        message_type=MessageType.PONG.value,
+        flags=0,
+        message_id=1,
+        payload=b"000000",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E007 INVALID_MESSAGE_ID",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_ack_wrong_length_is_rejected():
+    frame = Frame(
+        message_type=MessageType.ACK.value,
+        flags=0,
+        message_id=1,
+        payload=b"00001",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E008 INVALID_ACK",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_ack_out_of_range_id_is_rejected():
+    frame = Frame(
+        message_type=MessageType.ACK.value,
+        flags=0,
+        message_id=1,
+        payload=b"000000",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E008 INVALID_ACK",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_error_payload_must_be_utf8():
+    frame = Frame(
+        message_type=MessageType.ERROR.value,
+        flags=0,
+        message_id=1,
+        payload=b"\xff",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
+
+
+def test_error_payload_must_start_with_error_code():
+    frame = Frame(
+        message_type=MessageType.ERROR.value,
+        flags=0,
+        message_id=1,
+        payload=b"INVALID",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="E003 INVALID_FORMAT",
+    ):
+        validate_frame(
+            frame,
+            ConnectionState.ESTABLISHED.value,
+        )
