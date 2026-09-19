@@ -50,6 +50,7 @@ class NGXConnection:
         self.pending_acks = {}
         self.processed_messages = set()
         self.handshake_started = time.monotonic()
+        self.last_received_id = 0
 
     def send_frame(
         self,
@@ -345,6 +346,10 @@ class NGXConnection:
                         frame,
                         self.state.value,
                     )
+
+                    self._validate_message_id(
+                        frame
+                    )
                 except ValueError as exc:
                     error_text = str(exc)
 
@@ -378,6 +383,31 @@ class NGXConnection:
                 return (
                     self.pending_frames.popleft()
                 )
+
+    def _validate_message_id(self, frame):
+        # ACK and PONG reference another message ID
+        # in their payload, but their own frame IDs
+        # still belong to this sender's sequence.
+
+        expected = self.last_received_id + 1
+
+        if frame.message_id == expected:
+            self.last_received_id = frame.message_id
+            return
+
+        # A retransmitted ACK-requested MSG may reuse
+        # an existing ID, but only after the original
+        # message has already been accepted.
+        if (
+            frame.message_type == MessageType.MSG.value
+            and frame.flags & ACK_REQUESTED
+            and frame.message_id in self.processed_messages
+        ):
+            return
+
+        raise ProtocolError(
+            "E007 INVALID_MESSAGE_ID"
+        )
 
     def close(self):
         try:

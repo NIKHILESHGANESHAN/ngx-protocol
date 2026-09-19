@@ -1,3 +1,4 @@
+import pytest
 import socket
 import time
 import sys
@@ -12,6 +13,7 @@ sys.path.insert(
 )
 
 from ngx.connection import NGXConnection
+from ngx.parser import ProtocolError
 from ngx.constants import (
     ACK_REQUESTED,
     ACK_TIMEOUT,
@@ -126,7 +128,11 @@ def test_message_retransmission():
         assert first.message_id == message.message_id
         assert first.payload == b"Retransmission test"
 
-        # Deliberately do not send an ACK.
+        # Simulate the receiver accepting the message,
+        # but deliberately do not send/process the ACK.
+        server.receive_message(first)
+
+        # Deliberately do not let the sender receive the ACK.
 
         pending = client.pending_acks[
             message.message_id
@@ -165,7 +171,7 @@ def test_message_retransmission():
 
         assert server.receive_message(
             retransmitted
-        ) is True
+        ) is False
 
         ack = client.recv_frame()
 
@@ -180,6 +186,116 @@ def test_message_retransmission():
             message.message_id
             not in client.pending_acks
         )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_message_id_gap_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        first = client.send_msg("First")
+        received = server.recv_frame()
+
+        assert received.message_id == first.message_id
+
+        # Skip message ID 000002 and send 000003 manually.
+        from ngx.frame import Frame
+        from ngx.constants import MessageType
+
+        skipped = Frame(
+            message_type=MessageType.MSG.value,
+            flags=0,
+            message_id=3,
+            payload=b"Skipped ID",
+        )
+
+        client.sock.sendall(skipped.encode())
+
+        with pytest.raises(ProtocolError, match="E007 INVALID_MESSAGE_ID"):
+            server.recv_frame()
+    finally:
+        client.close()
+        server.close()
+
+
+def test_message_id_decrease_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        first = client.send_msg("First")
+        received = server.recv_frame()
+
+        assert received.message_id == first.message_id
+
+        from ngx.frame import Frame
+        from ngx.constants import MessageType
+
+        # Frame.encode() rejects ID 0, so construct ID 2 first,
+        # then verify a backward ID using a valid frame.
+        second = Frame(
+            message_type=MessageType.MSG.value,
+            flags=0,
+            message_id=2,
+            payload=b"Second",
+        )
+        client.sock.sendall(second.encode())
+
+        received_second = server.recv_frame()
+        assert received_second.message_id == 2
+
+        backward = Frame(
+            message_type=MessageType.MSG.value,
+            flags=0,
+            message_id=1,
+            payload=b"Backward ID",
+        )
+        client.sock.sendall(backward.encode())
+
+        with pytest.raises(ProtocolError, match="E007 INVALID_MESSAGE_ID"):
+            server.recv_frame()
+    finally:
+        client.close()
+        server.close()
+
+def test_message_id_decrease_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        first = client.send_msg("First")
+        received = server.recv_frame()
+
+        assert received.message_id == first.message_id
+
+        from ngx.frame import Frame
+        from ngx.constants import MessageType
+
+        second = Frame(
+            message_type=MessageType.MSG.value,
+            flags=0,
+            message_id=2,
+            payload=b"Second",
+        )
+        client.sock.sendall(second.encode())
+
+        received_second = server.recv_frame()
+        assert received_second.message_id == 2
+
+        backward = Frame(
+            message_type=MessageType.MSG.value,
+            flags=0,
+            message_id=1,
+            payload=b"Backward ID",
+        )
+        client.sock.sendall(backward.encode())
+
+        with pytest.raises(
+            ProtocolError,
+            match="E007 INVALID_MESSAGE_ID",
+        ):
+            server.recv_frame()
 
     finally:
         client.close()
