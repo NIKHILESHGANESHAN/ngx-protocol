@@ -3,7 +3,6 @@ from .constants import (
     MAX_PAYLOAD,
     MessageType,
 )
-from .errors import ERRORS
 
 
 VALID_MESSAGE_TYPES = {
@@ -15,10 +14,11 @@ VALID_MESSAGE_TYPES = {
 def validate_frame(frame, state):
     """
     Validate a parsed frame against NGX/0.1 rules.
-
-    Raises:
-        ValueError: protocol violation.
     """
+
+    # -------------------------
+    # General frame validation
+    # -------------------------
 
     if frame.message_type not in VALID_MESSAGE_TYPES:
         raise ValueError(
@@ -30,7 +30,7 @@ def validate_frame(frame, state):
             "E003 INVALID_FORMAT"
         )
 
-    # NGX/0.1 currently defines only bit 0.
+    # Only bit 0 is currently defined.
     if frame.flags & ~ACK_REQUESTED:
         raise ValueError(
             "E003 INVALID_FORMAT"
@@ -46,7 +46,10 @@ def validate_frame(frame, state):
             "E006 MESSAGE_TOO_LARGE"
         )
 
-    # HELLO is only valid during handshake.
+    # -------------------------
+    # Connection state rules
+    # -------------------------
+
     if (
         frame.message_type == MessageType.HELLO.value
         and state != "HANDSHAKE"
@@ -55,7 +58,6 @@ def validate_frame(frame, state):
             "E005 INVALID_STATE"
         )
 
-    # HELLO_ACK is only valid during handshake.
     if (
         frame.message_type == MessageType.HELLO_ACK.value
         and state != "HANDSHAKE"
@@ -64,7 +66,6 @@ def validate_frame(frame, state):
             "E005 INVALID_STATE"
         )
 
-    # Application messages require an established session.
     if (
         frame.message_type
         in {
@@ -78,5 +79,149 @@ def validate_frame(frame, state):
         raise ValueError(
             "E005 INVALID_STATE"
         )
+
+    # -------------------------
+    # Command-specific rules
+    # -------------------------
+
+    # HELLO
+    if frame.message_type == MessageType.HELLO.value:
+        if frame.flags != 0:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
+
+        if len(frame.payload) != 0:
+            raise ValueError(
+                "E004 INVALID_LENGTH"
+            )
+
+    # HELLO_ACK
+    elif frame.message_type == MessageType.HELLO_ACK.value:
+        if frame.flags != 0:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
+
+        if len(frame.payload) != 0:
+            raise ValueError(
+                "E004 INVALID_LENGTH"
+            )
+
+    # MSG
+    elif frame.message_type == MessageType.MSG.value:
+        try:
+            frame.payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            ) from exc
+
+    # ACK
+    elif frame.message_type == MessageType.ACK.value:
+        if frame.flags != 0:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
+
+        if len(frame.payload) != 6:
+            raise ValueError(
+                "E008 INVALID_ACK"
+            )
+
+        try:
+            text = frame.payload.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                "E008 INVALID_ACK"
+            ) from exc
+
+        if not text.isdigit():
+            raise ValueError(
+                "E008 INVALID_ACK"
+            )
+
+        acknowledged_id = int(text)
+
+        if not 1 <= acknowledged_id <= 999999:
+            raise ValueError(
+                "E008 INVALID_ACK"
+            )
+
+    # PING
+    elif frame.message_type == MessageType.PING.value:
+        if frame.flags != 0:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
+
+        if len(frame.payload) != 0:
+            raise ValueError(
+                "E004 INVALID_LENGTH"
+            )
+
+    # PONG
+    elif frame.message_type == MessageType.PONG.value:
+        if frame.flags != 0:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
+
+        if len(frame.payload) != 6:
+            raise ValueError(
+                "E004 INVALID_LENGTH"
+            )
+
+        try:
+            text = frame.payload.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                "E004 INVALID_LENGTH"
+            ) from exc
+
+        if not text.isdigit():
+            raise ValueError(
+                "E004 INVALID_LENGTH"
+            )
+
+        pong_id = int(text)
+
+        if not 1 <= pong_id <= 999999:
+            raise ValueError(
+                "E007 INVALID_MESSAGE_ID"
+            )
+
+    # BYE
+    elif frame.message_type == MessageType.BYE.value:
+        if frame.flags != 0:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
+
+        try:
+            frame.payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            ) from exc
+
+    # ERROR
+    elif frame.message_type == MessageType.ERROR.value:
+        if frame.flags != 0:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
+
+        try:
+            text = frame.payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            ) from exc
+
+        if not text.startswith("E"):
+            raise ValueError(
+                "E003 INVALID_FORMAT"
+            )
 
     return True
