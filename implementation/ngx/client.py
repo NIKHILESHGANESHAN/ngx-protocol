@@ -8,14 +8,14 @@ HOST = "127.0.0.1"
 PORT = 9000
 
 
-def run_client():
+def run_client(host=HOST, port=PORT):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((HOST, PORT))
+    sock.connect((host, port))
 
     connection = NGXConnection(sock)
 
     try:
-        print(f"Connected to {HOST}:{PORT}")
+        print(f"Connected to {host}:{port}")
 
         # 1. HELLO
         hello = connection.send_hello()

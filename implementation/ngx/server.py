@@ -8,7 +8,7 @@ HOST = "127.0.0.1"
 PORT = 9000
 
 
-def run_server():
+def run_server(host=HOST, port=PORT):
     server_socket = socket.socket(
         socket.AF_INET,
         socket.SOCK_STREAM,
@@ -20,12 +20,12 @@ def run_server():
         1,
     )
 
-    server_socket.bind((HOST, PORT))
+    server_socket.bind((host, port))
     server_socket.listen(1)
 
     print(
         f"NGX server listening on "
-        f"{HOST}:{PORT}"
+        f"{host}:{port}"
     )
 
     client_socket, address = server_socket.accept()
