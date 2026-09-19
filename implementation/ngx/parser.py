@@ -3,7 +3,9 @@ from .frame import Frame
 
 
 class ProtocolError(Exception):
-    pass
+    def __init__(self, message, code="E011"):
+        super().__init__(message)
+        self.code = code
 
 
 class FrameParser:
@@ -36,38 +38,38 @@ class FrameParser:
         try:
             header_text = header.decode("ascii")
         except UnicodeDecodeError as exc:
-            raise ProtocolError("header is not ASCII") from exc
+            raise ProtocolError("header is not ASCII", "E003") from exc
 
         parts = header_text.split(" ")
 
         if len(parts) != 5:
-            raise ProtocolError("invalid header")
+            raise ProtocolError("invalid header", "E003")
 
         protocol, message_type, flags_text, id_text, length_text = parts
 
         if protocol != PROTOCOL:
-            raise ProtocolError("invalid protocol version")
+            raise ProtocolError("invalid protocol version", "E001")
 
         try:
             flags = int(flags_text, 16)
         except ValueError as exc:
-            raise ProtocolError("invalid flags") from exc
+            raise ProtocolError("invalid flags", "E003") from exc
 
         try:
             message_id = int(id_text)
         except ValueError as exc:
-            raise ProtocolError("invalid message ID") from exc
+            raise ProtocolError("invalid message ID", "E007") from exc
 
         try:
             payload_length = int(length_text)
         except ValueError as exc:
-            raise ProtocolError("invalid payload length") from exc
+            raise ProtocolError("invalid payload length", "E004") from exc
 
         if not 1 <= message_id <= 999999:
-            raise ProtocolError("invalid message ID")
+            raise ProtocolError("invalid message ID", "E007")
 
         if not 0 <= payload_length <= MAX_PAYLOAD:
-            raise ProtocolError("payload too large")
+            raise ProtocolError("payload too large", "E006")
 
         payload_start = delimiter + 2
         payload_end = payload_start + payload_length

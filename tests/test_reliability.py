@@ -18,6 +18,7 @@ from ngx.constants import (
     ACK_REQUESTED,
     ACK_TIMEOUT,
     ConnectionState,
+    MessageType,
 )
 
 
@@ -487,6 +488,70 @@ def test_handshake_to_closing_is_rejected():
             match="E005 INVALID_STATE",
         ):
             client.mark_closing()
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_invalid_message_id_sends_error_before_failure():
+    client, server = make_established_connections()
+
+    try:
+        from ngx.frame import Frame
+        from ngx.constants import MessageType
+
+        client.sock.settimeout(1.0)
+
+        invalid = Frame(
+            message_type=MessageType.MSG.value,
+            flags=0,
+            message_id=2,
+            payload=b"Invalid sequence",
+        )
+
+        client.sock.sendall(invalid.encode())
+
+        with pytest.raises(
+            ProtocolError,
+            match="E007 INVALID_MESSAGE_ID",
+        ):
+            server.recv_frame()
+
+        error = client.recv_frame()
+
+        assert error.message_type == MessageType.ERROR.value
+        assert error.payload.startswith(
+            b"E007 INVALID_MESSAGE_ID"
+        )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_invalid_protocol_version_sends_error():
+    client, server = make_established_connections()
+
+    try:
+        client.sock.settimeout(1.0)
+
+        client.sock.sendall(
+            b"BAD/0.1 MSG 00 000001 0\r\n"
+        )
+
+        with pytest.raises(
+            ProtocolError,
+            match="E001",
+        ):
+            server.recv_frame()
+
+        error = client.recv_frame()
+
+        assert error.message_type == MessageType.ERROR.value
+        assert error.payload.startswith(
+            b"E001 INVALID_VERSION"
+        )
 
     finally:
         client.close()

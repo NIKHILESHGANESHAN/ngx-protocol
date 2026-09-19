@@ -101,6 +101,16 @@ class NGXConnection:
 
         return frame
 
+    def handle_protocol_error(self, error):
+        self.send_error(
+            error.code,
+            str(error),
+        )
+
+        raise ProtocolError(
+            f"{error.code} {error}"
+        )
+
     def send_error(self, code, detail=""):
         if code not in ERRORS:
             raise ValueError(
@@ -382,8 +392,8 @@ class NGXConnection:
 
             try:
                 frames = self.parser.feed(data)
-            except ProtocolError:
-                raise
+            except ProtocolError as exc:
+                self.handle_protocol_error(exc)
 
             for frame in frames:
                 try:
@@ -451,7 +461,7 @@ class NGXConnection:
         ):
             return
 
-        raise ProtocolError(
+        raise ValueError(
             "E007 INVALID_MESSAGE_ID"
         )
 
