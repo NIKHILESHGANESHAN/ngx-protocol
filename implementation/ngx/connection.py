@@ -294,45 +294,55 @@ class NGXConnection:
         while True:
             self.check_retransmissions()
 
-            if self.state == ConnectionState.HANDSHAKE:
-                elapsed = (
-                    time.monotonic()
-                    - self.handshake_started
-                )
+            timeout = None
 
-                remaining = (
-                    HELLO_TIMEOUT - elapsed
-                )
+            if self.state == ConnectionState.HANDSHAKE:
+                elapsed = time.monotonic() - self.handshake_started
+                remaining = HELLO_TIMEOUT - elapsed
 
                 if remaining <= 0:
                     self.send_error(
                         "E009",
                         "HELLO timeout",
                     )
-
                     raise ProtocolError(
                         "E009 HANDSHAKE_TIMEOUT"
                     )
 
-                self.sock.settimeout(
-                    remaining
+                timeout = remaining
+
+            elif self.pending_acks:
+                now = time.monotonic()
+                deadlines = [
+                    pending.last_sent + ACK_TIMEOUT
+                    for pending in self.pending_acks.values()
+                ]
+
+                timeout = max(
+                    0.0,
+                    min(deadlines) - now,
                 )
 
-            else:
-                self.sock.settimeout(None)
+            self.sock.settimeout(timeout)
 
             try:
                 data = self.sock.recv(4096)
 
             except socket.timeout as exc:
-                self.send_error(
-                    "E009",
-                    "HELLO timeout",
-                )
+                if self.state == ConnectionState.HANDSHAKE:
+                    self.send_error(
+                        "E009",
+                        "HELLO timeout",
+                    )
+                    raise ProtocolError(
+                        "E009 HANDSHAKE_TIMEOUT"
+                    ) from exc
 
-                raise ProtocolError(
-                    "E009 HANDSHAKE_TIMEOUT"
-                ) from exc
+                # Established connection: a timeout means
+                # an ACK deadline has arrived. Retransmit and
+                # continue waiting for incoming data.
+                self.check_retransmissions()
+                continue
 
             if not data:
                 raise ConnectionError(
@@ -340,9 +350,7 @@ class NGXConnection:
                 )
 
             try:
-                frames = self.parser.feed(
-                    data
-                )
+                frames = self.parser.feed(data)
             except ProtocolError:
                 raise
 
@@ -356,6 +364,7 @@ class NGXConnection:
                     self._validate_message_id(
                         frame
                     )
+
                 except ValueError as exc:
                     error_text = str(exc)
 

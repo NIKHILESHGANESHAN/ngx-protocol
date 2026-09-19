@@ -377,3 +377,91 @@ def test_malformed_ack_is_rejected():
     finally:
         client.close()
         server.close()
+
+
+def test_recv_frame_automatically_retransmits_on_ack_timeout(
+    monkeypatch,
+):
+    import threading
+
+    monkeypatch.setattr(
+        "ngx.connection.ACK_TIMEOUT",
+        0.05,
+    )
+
+    client, server = make_established_connections()
+
+    try:
+        message = client.send_msg(
+            "Automatic retransmission",
+            require_ack=True,
+        )
+
+        first = server.recv_frame()
+
+        assert first.message_id == message.message_id
+
+        # Simulate successful application acceptance while
+        # deliberately withholding the ACK.
+        server.processed_messages.add(
+            first.message_id
+        )
+
+        result = {}
+
+        def wait_for_ack():
+            try:
+                result["frame"] = client.recv_frame()
+            except Exception as exc:
+                result["error"] = exc
+
+        thread = threading.Thread(
+            target=wait_for_ack,
+            daemon=True,
+        )
+        thread.start()
+
+        retransmitted = server.recv_frame()
+
+        assert retransmitted.message_id == (
+            message.message_id
+        )
+
+        assert retransmitted.payload == (
+            b"Automatic retransmission"
+        )
+
+        assert (
+            client.pending_acks[
+                message.message_id
+            ].attempts
+            == 2
+        )
+
+        # Now acknowledge the retransmission.
+        server.send_ack(message.message_id)
+
+        thread.join(timeout=1.0)
+
+        assert not thread.is_alive()
+        assert "error" not in result
+
+        ack = result["frame"]
+
+        assert ack.message_type == "ACK"
+        assert ack.payload == (
+            f"{message.message_id:06d}".encode(
+                "ascii"
+            )
+        )
+
+        client.receive_ack(ack)
+
+        assert (
+            message.message_id
+            not in client.pending_acks
+        )
+
+    finally:
+        client.close()
+        server.close()
