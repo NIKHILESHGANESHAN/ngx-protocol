@@ -15,6 +15,7 @@ sys.path.insert(
 from ngx.connection import NGXConnection
 from ngx.frame import Frame
 from ngx.parser import ProtocolError
+from ngx.validation import validate_frame
 from ngx.constants import (
     ACK_REQUESTED,
     ACK_TIMEOUT,
@@ -621,6 +622,133 @@ def test_duplicate_pong_is_rejected():
             match="E012 INVALID_PONG",
         ):
             client.receive_pong(pong)
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_application_frames_are_rejected_after_closing():
+    client, server = make_established_connections()
+
+    try:
+        client.mark_closing()
+
+        for message_type in (
+            MessageType.MSG.value,
+            MessageType.PING.value,
+            MessageType.PONG.value,
+        ):
+            with pytest.raises(
+                ProtocolError,
+                match="E005 INVALID_STATE",
+            ):
+                client.send_frame(
+                    message_type,
+                    b"",
+                    0,
+                )
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_bye_is_allowed_during_closing():
+    client, server = make_established_connections()
+
+    try:
+        client.mark_closing()
+
+        frame = client.send_bye("Goodbye")
+
+        assert frame.message_type == MessageType.BYE.value
+        assert client.state == ConnectionState.CLOSING
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_bye_is_rejected_during_handshake():
+    client, server = make_established_connections()
+
+    try:
+        client.state = ConnectionState.HANDSHAKE
+
+        with pytest.raises(
+            ProtocolError,
+            match="E005 INVALID_STATE",
+        ):
+            client.send_bye("Too early")
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_client_initiated_bye_completes_graceful_shutdown():
+    client, server = make_established_connections()
+
+    try:
+        client.send_bye("Client shutting down")
+        client.mark_closing()
+
+        frame = server.recv_frame()
+
+        assert frame.message_type == MessageType.BYE.value
+        assert server.state == ConnectionState.ESTABLISHED
+
+        server.mark_closing()
+        server.send_bye("Goodbye")
+
+        frame = client.recv_frame()
+
+        assert frame.message_type == MessageType.BYE.value
+        assert client.state == ConnectionState.CLOSING
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_server_initiated_bye_completes_graceful_shutdown():
+    client, server = make_established_connections()
+
+    try:
+        server.send_bye("Server shutting down")
+        server.mark_closing()
+
+        frame = client.recv_frame()
+
+        assert frame.message_type == MessageType.BYE.value
+        assert client.state == ConnectionState.ESTABLISHED
+
+        client.mark_closing()
+        client.send_bye("Goodbye")
+
+        frame = server.recv_frame()
+
+        assert frame.message_type == MessageType.BYE.value
+        assert server.state == ConnectionState.CLOSING
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_duplicate_outgoing_bye_is_rejected():
+    client, server = make_established_connections()
+
+    try:
+        client.send_bye("Client shutting down")
+        client.mark_closing()
+
+        with pytest.raises(
+            ProtocolError,
+            match="E005 INVALID_STATE",
+        ):
+            client.send_bye("Duplicate BYE")
 
     finally:
         client.close()

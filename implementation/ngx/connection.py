@@ -49,6 +49,7 @@ class NGXConnection:
 
         self.pending_acks = {}
         self.pending_pings = set()
+        self.bye_sent = False
         self.acknowledged_messages = set()
         self.processed_messages = set()
         self.handshake_started = time.monotonic()
@@ -91,6 +92,39 @@ class NGXConnection:
         payload=b"",
         flags=0,
     ):
+        allowed_states = {
+            MessageType.HELLO.value: {
+                ConnectionState.HANDSHAKE,
+            },
+            MessageType.HELLO_ACK.value: {
+                ConnectionState.HANDSHAKE,
+            },
+            MessageType.MSG.value: {
+                ConnectionState.ESTABLISHED,
+            },
+            MessageType.ACK.value: {
+                ConnectionState.ESTABLISHED,
+            },
+            MessageType.PING.value: {
+                ConnectionState.ESTABLISHED,
+            },
+            MessageType.PONG.value: {
+                ConnectionState.ESTABLISHED,
+            },
+            MessageType.BYE.value: {
+                ConnectionState.ESTABLISHED,
+                ConnectionState.CLOSING,
+            },
+        }
+
+        if (
+            message_type in allowed_states
+            and self.state not in allowed_states[message_type]
+        ):
+            raise ProtocolError(
+                "E005 INVALID_STATE"
+            )
+
         frame = Frame(
             message_type=message_type,
             flags=flags,
@@ -215,11 +249,19 @@ class NGXConnection:
         )
 
     def send_bye(self, reason=""):
-        return self.send_frame(
+        if self.bye_sent:
+            raise ProtocolError(
+                "E005 INVALID_STATE"
+            )
+
+        frame = self.send_frame(
             MessageType.BYE.value,
             reason.encode("utf-8"),
             0,
         )
+
+        self.bye_sent = True
+        return frame
 
     def receive_ack(self, frame):
         if frame.message_type != MessageType.ACK.value:
